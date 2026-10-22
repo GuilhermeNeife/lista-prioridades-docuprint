@@ -3,6 +3,8 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWid
 from PySide6.QtCore import Qt
 from qt_material import apply_stylesheet
 import sqlite3
+import os
+import subprocess
 
 # Conecta ao banco de dados e obtém os pedidos
 def load_data():
@@ -27,6 +29,7 @@ class PedidoApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Gerenciamento de Pedidos")
         self.setGeometry(100, 100, 1200, 600)
+        
 
         self.tabs = QTabWidget()  # Widget de abas
         self.setCentralWidget(self.tabs)
@@ -49,8 +52,8 @@ class PedidoApp(QMainWindow):
             table.setColumnCount(10)
             table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'Qtd Cópias'])
             table.cellChanged.connect(self.cell_changed)  # Conecta o evento de edição de célula
+            table.cellClicked.connect(self.cell_clicked)  # Conecta o evento de clique na célula
 
-            # Configurações de estilos e tamanhos
             self.setup_table_styles(table)
 
             layout.addWidget(table)
@@ -69,7 +72,7 @@ class PedidoApp(QMainWindow):
                 background-color: lightgray;
                 padding: 4px;
                 border: none; /* Remove as bordas */
-                font-size: 12px; /* Ajuste o tamanho da fonte */
+                font-size: 10px; /* Ajuste o tamanho da fonte */
                 height: 25px; /* Altura do cabeçalho */
             }
         """)
@@ -78,12 +81,10 @@ class PedidoApp(QMainWindow):
         for i, width in enumerate(widths):
             table.setColumnWidth(i, width)
 
-
-    # Carrega os dados do banco de dados nas tabelas
     def load_data_into_tables(self):
         data = load_data()
 
-        # Desativa temporariamente o sinal cellChanged
+        # Desativar temporariamente o sinal cellChanged
         for table in self.tables.values():
             table.cellChanged.disconnect(self.cell_changed)
 
@@ -94,9 +95,10 @@ class PedidoApp(QMainWindow):
         for row in data:
             self.add_row_to_table(row)
 
-        # Reativa o sinal cellChanged
+        # Reativar o sinal cellChanged após todos os dados serem carregados
         for table in self.tables.values():
             table.cellChanged.connect(self.cell_changed)
+
 
     def add_row_to_table(self, row):
         try:
@@ -109,8 +111,11 @@ class PedidoApp(QMainWindow):
         row_count = table.rowCount()
         table.insertRow(row_count)
 
-        # Inicializa todos os itens da linha como QTableWidgetItem
+        # Inicializa todos os itens da linha como QTableWidgetItem e ajusta a editabilidade
         for col_index, data in enumerate(row):
+            item = QTableWidgetItem(str(data))
+            if col_index not in [5, 6, 8]:  # Editáveis apenas observações e caminho do pedido
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             if col_index == 4:  # Coluna de status com ComboBox
                 combo = QComboBox()
                 combo.addItems(self.stages)
@@ -118,19 +123,32 @@ class PedidoApp(QMainWindow):
                 combo.currentIndexChanged.connect(lambda index, lote=lote, combo=combo: self.update_status(lote, combo.currentText()))
                 table.setCellWidget(row_count, col_index, combo)
             else:
-                table.setItem(row_count, col_index, QTableWidgetItem(str(data)))
+                table.setItem(row_count, col_index, item)
 
 
-
+    def cell_clicked(self, row, column):
+        # Verificar se a coluna clicada é "Caminho do Pedido" (índice 8)
+        if column == 8:
+            table = self.tables[self.tabs.tabText(self.tabs.currentIndex())]
+            item = table.item(row, column)
+            if item:
+                caminho = item.text()
+                reply = QMessageBox.question(self, 'Abrir Pasta',
+                                             "Deseja abrir a pasta?",
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    if os.path.exists(caminho):
+                        subprocess.Popen(f'explorer "{caminho}"')
+                    else:
+                        QMessageBox.warning(self, 'Erro', 'Caminho não encontrado.')
 
     def cell_changed(self, row, column):
-        # Verificar se o item existe antes de tentar acessar seu texto
         item = self.tables[self.tabs.tabText(self.tabs.currentIndex())].item(row, 0)
-        if item is not None:
-            lote = item.text()
+        if item:
+            lote = item.text()  # Correto o erro de digitação aqui
             if column in [5, 6]:  # Colunas de observações
                 new_text = self.tables[self.tabs.tabText(self.tabs.currentIndex())].item(row, column).text()
-                if new_text:  # Garante que new_text não é None
+                if new_text:
                     self.update_observations(lote, new_text, column)
         else:
             print(f"Erro: Item não encontrado na linha {row}, coluna 0")
@@ -145,15 +163,8 @@ class PedidoApp(QMainWindow):
         conn.close()
 
     def update_status(self, lote, new_status):
-        reply = QMessageBox.question(self, 'Confirmação de Mudança de Status',
-                                     'Você tem certeza que deseja mudar o status?',
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-
-        if reply == QMessageBox.Yes:
-            update_database(lote, new_status)
-            self.load_data_into_tables()  # Recarrega os dados para mover o pedido para a nova aba
-        else:
-            self.load_data_into_tables()  # Recarrega sem mudar o status para reverter a seleção do ComboBox
+        update_database(lote, new_status)
+        self.load_data_into_tables()  # Recarrega os dados para mover o pedido para a nova aba
 
 # Configuração do caminho do banco de dados
 database_path = "C:\\Users\\gneife\\Desktop\\pedidos.db"
