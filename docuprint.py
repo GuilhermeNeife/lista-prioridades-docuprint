@@ -94,6 +94,9 @@ def check_delays_by_stage():
     conn.close()
     return {row[0]: row[1] for row in delays}
 
+
+
+
 class LoginWindow(QDialog):
     def __init__(self):
         super().__init__()
@@ -236,36 +239,37 @@ class PedidoApp(QMainWindow):
         total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
         delay_counts = [delays.get(s, 0) for s in sectors]
 
-        # Criando subplots para pedidos e livros
-        ax1 = self.figure.add_subplot(121)  # 1 linha, 2 colunas, posição 1
-        ax2 = self.figure.add_subplot(122)  # 1 linha, 2 colunas, posição 2
-
-        # Gráfico de barras para pedidos
         indices = range(len(sectors))
-        ax1.bar(indices, total_pedidos, color='blue', label='Total de Pedidos')
-        ax1.set_title('Total de Pedidos por Setor')
-        ax1.set_xlabel('Setor')
-        ax1.set_ylabel('Quantidade de Pedidos')
-        ax1.set_xticks(indices)
-        ax1.set_xticklabels(sectors, rotation=45, ha='right')
+        width = 0.25  # Largura das barras
 
-        # Adicionando etiquetas de atrasos no gráfico de pedidos
-        for i, delay in enumerate(delay_counts):
-            if delay > 0:
-                ax1.text(i, total_pedidos[i] + 1, f'Atrasados: {delay}', color='red', ha='center')
+        # Usando add_subplot para adicionar os eixos à figura existente
+        ax = self.figure.add_subplot(111)  # 111 significa 1x1 grid, primeira subplot
 
-        # Gráfico de barras para livros
-        ax2.bar(indices, total_livros, color='green', label='Total de Livros')
-        ax2.set_title('Total de Livros por Setor')
-        ax2.set_xlabel('Setor')
-        ax2.set_ylabel('Quantidade de Livros')
-        ax2.set_xticks(indices)
-        ax2.set_xticklabels(sectors, rotation=45, ha='right')
+        bar1 = ax.bar([i - width for i in indices], total_pedidos, width, label='Total de Pedidos', color='b')
+        bar2 = ax.bar(indices, total_livros, width, label='Total de Livros', color='g')
+        bar3 = ax.bar([i + width for i in indices], delay_counts, width, label='Atrasados', color='r')
 
-        # Ajustando o layout para evitar sobreposição de etiquetas
+        ax.set_title('Comparativo por Setor')
+        ax.set_xlabel('Setor')
+        ax.set_xticks(indices)
+        ax.set_xticklabels(sectors, rotation=45, ha='right')
+        ax.legend()
+
+        self.add_bar_labels(bar1, ax)
+        self.add_bar_labels(bar2, ax)
+        self.add_bar_labels(bar3, ax)
+
         self.figure.tight_layout()
-
         self.canvas.draw()
+
+    def add_bar_labels(self, bars, ax):
+        for bar in bars:
+            height = bar.get_height()
+            ax.annotate('{}'.format(height),
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),  # 3 points vertical offset
+                        textcoords="offset points",
+                        ha='center', va='bottom')
 
 
     def fetch_data(self, sector):
