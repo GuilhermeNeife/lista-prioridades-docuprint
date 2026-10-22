@@ -84,36 +84,166 @@ def send_email(lote, new_status,responsible):
         print(f"Falha ao enviar e-mail: {e}")
 
 
-def count_books_and_orders_by_stage():
-    conn = sqlite3.connect(database_path)
-    cursor = conn.cursor()
-    # Esta consulta retorna o total de pedidos e livros agrupados por setor
-    cursor.execute("SELECT status, COUNT(*), SUM(Total) FROM pedidos GROUP BY status")
-    data = cursor.fetchall()
-    conn.close()
-    return {row[0]: {'total_pedidos': row[1], 'total_livros': row[2]} for row in data}
+from datetime import datetime
 
+# Função para verificar pedidos em atraso
 def check_delays_by_stage():
-    from datetime import datetime
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
-    today = datetime.now().strftime('%Y-%m-%d')
-    # Esta consulta verifica os atrasos por setor e inclui o total de livros em atraso
-    cursor.execute("SELECT status, COUNT(*), SUM(Total) FROM pedidos WHERE prazo_grafica < ? GROUP BY status", (today,))
-    delays = cursor.fetchall()
+
+    # Obter a data de hoje como um objeto datetime
+    today = datetime.now()
+    print(f"Data de hoje: {today}")  # Depuração
+
+    # Carregar todos os pedidos exceto os que estão finalizados
+    cursor.execute("""
+        SELECT status, prazo_grafica, COUNT(*), SUM(Total)
+        FROM pedidos
+        WHERE status != 'Finalizado'
+        GROUP BY status, prazo_grafica
+    """)
+
+    rows = cursor.fetchall()
+    delays = {}
+
+    for row in rows:
+        status, prazo_grafica_str, count, total = row
+        try:
+            # Converter 'prazo_grafica' de string para um objeto datetime (assumindo formato 'DD/MM/YYYY')
+            prazo_grafica = datetime.strptime(prazo_grafica_str, '%d/%m/%Y')
+            print(f"Status: {status}, Prazo: {prazo_grafica}, Hoje: {today}")
+
+            # Verificar se o pedido está em atraso
+            if prazo_grafica < today:
+                if status not in delays:
+                    delays[status] = {'pedidos_atrasados': 0, 'livros_atrasados': 0}
+                delays[status]['pedidos_atrasados'] += count
+                delays[status]['livros_atrasados'] += total
+                print(f"Pedido com status {status} está atrasado!")
+            else:
+                print(f"Pedido com status {status} está em dia.")
+
+        except ValueError:
+            print(f"Erro ao converter a data {prazo_grafica_str} para o status {status}")
+
     conn.close()
-    return {row[0]: {'pedidos_atrasados': row[1], 'livros_atrasados': row[2]} for row in delays}
+    return delays
+
+# Função para contar pedidos e livros por setor e também em atraso
+def count_books_and_orders_by_stage(sectors):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    # Obter o total de pedidos e livros agrupados por setor
+    print("Obtendo total de pedidos e livros por setor...")
+    cursor.execute("SELECT status, prazo_grafica, COUNT(*), SUM(Total) FROM pedidos GROUP BY status, prazo_grafica")
+    total_data = cursor.fetchall()
+
+    # Obter o total de pedidos e livros em atraso (com status diferente de "Finalizado" e prazo menor que hoje)
+    today = datetime.now()
+    print(f"Data de hoje: {today} - Verificando pedidos em atraso...")
+    
+    delay_data = []
+    for row in total_data:
+        status, prazo_grafica_str, count, total = row
+        try:
+            # Converter 'prazo_grafica' para objeto datetime
+            prazo_grafica = datetime.strptime(prazo_grafica_str, '%d/%m/%Y')
+            if prazo_grafica < today and status != 'Finalizado':
+                delay_data.append((status, count, total))
+        except ValueError:
+            print(f"Erro ao converter a data {prazo_grafica_str} para o status {status}")
+
+    conn.close()
+
+    # Processar os dados totais
+    print("Processando dados totais...")
+    total_counts = {}
+    delay_counts = {}
+
+    for row in total_data:
+        status, prazo_grafica_str, count, total = row
+        if status not in total_counts:
+            total_counts[status] = {'total_pedidos': 0, 'total_livros': 0}
+        total_counts[status]['total_pedidos'] += count
+        total_counts[status]['total_livros'] += total
+
+    # Processar os dados de atrasos
+    print("Processando dados de atrasos...")
+    for row in delay_data:
+        status, count, total = row
+        if status not in delay_counts:
+            delay_counts[status] = {'pedidos_atrasados': 0, 'livros_atrasados': 0}
+        delay_counts[status]['pedidos_atrasados'] += count
+        delay_counts[status]['livros_atrasados'] += total
+
+    print(f"Total Counts: {total_counts}")
+    print(f"Delay Counts: {delay_counts}")
+
+    # Calcular os pedidos em dia (total de pedidos - atrasados)
+    print("Calculando pedidos em dia...")
+    for status in total_counts:
+        total_pedidos = total_counts[status]['total_pedidos']
+        total_livros = total_counts[status]['total_livros']
+        atrasos = delay_counts.get(status, {'pedidos_atrasados': 0, 'livros_atrasados': 0})
+
+        pedidos_atrasados = atrasos['pedidos_atrasados']
+        livros_atrasados = atrasos['livros_atrasados']
+
+        # Pedidos e livros em dia são o total menos os atrasados
+        pedidos_em_dia = total_pedidos - pedidos_atrasados
+        livros_em_dia = total_livros - livros_atrasados
+
+        total_counts[status]['pedidos_em_dia'] = pedidos_em_dia
+        total_counts[status]['livros_em_dia'] = livros_em_dia
+
+        # Logs de depuração para cada status
+        print(f"Status: {status}")
+        print(f"Total de Pedidos: {total_pedidos}, Pedidos Atrasados: {pedidos_atrasados}, Pedidos Em Dia: {pedidos_em_dia}")
+        print(f"Total de Livros: {total_livros}, Livros Atrasados: {livros_atrasados}, Livros Em Dia: {livros_em_dia}")
+
+    return total_counts, delay_counts
+
+
 
 def fetch_delayed_lots():
-    from datetime import datetime
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
-    today = datetime.now().strftime('%Y-%m-%d')
-    # Busca informações sobre lotes atrasados
-    cursor.execute("SELECT lote, SUM(Total), prazo_grafica FROM pedidos WHERE prazo_grafica < ? GROUP BY lote ORDER BY prazo_grafica", (today,))
-    delayed_lots = cursor.fetchall()
+
+    today = datetime.now()
+    print(f"Data de hoje: {today}")  # Depuração
+
+    # Carregar todos os pedidos exceto os que estão finalizados
+    cursor.execute("""
+        SELECT lote, prazo_grafica, SUM(Total)
+        FROM pedidos
+        WHERE status != 'Finalizado'
+        ORDER BY prazo_grafica
+    """)
+
+    rows = cursor.fetchall()
+    delayed_lots = []
+
+    for row in rows:
+        lote, prazo_grafica_str, total = row
+        try:
+            # Converter 'prazo_grafica' de string para um objeto datetime (assumindo formato 'DD/MM/YYYY')
+            prazo_grafica = datetime.strptime(prazo_grafica_str, '%d/%m/%Y')
+            print(f"Lote: {lote}, Prazo: {prazo_grafica}, Hoje: {today}")
+
+            # Verificar se o pedido está em atraso
+            if prazo_grafica < today:
+                delayed_lots.append((lote, total, prazo_grafica_str))
+                print(f"Lote {lote} está atrasado!")
+            else:
+                print(f"Lote {lote} está em dia.")
+
+        except ValueError:
+            print(f"Erro ao converter a data {prazo_grafica_str} para o lote {lote}")
+
     conn.close()
     return delayed_lots
+
 
 
 
@@ -174,6 +304,12 @@ class LoginWindow(QDialog):
         else:
             QMessageBox.warning(self, 'Login Failed', 'Invalid username or password')
 
+def convert_str_to_date(date_str):
+    try:
+        return datetime.strptime(date_str, '%d/%m/%Y')
+    except ValueError:
+        print(f"Erro ao converter a data: {date_str}")
+        return None  # Retorna None se houver erro na conversão
 
 
 # Classe principal do aplicativo
@@ -238,18 +374,23 @@ class PedidoApp(QMainWindow):
         dashboard_widget = QWidget()
         dashboard_layout = QVBoxLayout()
 
-        # ComboBox para seleção de setor
+        # Filtro para seleção de setor
         self.combo_filter = QComboBox()
         self.combo_filter.addItem("Geral")
         self.combo_filter.addItems(self.stages)  # Adiciona os setores já definidos
         dashboard_layout.addWidget(self.combo_filter)
 
-        # Novo ComboBox para seleção de status dos dados
+        # Filtro para seleção de status (Todos, Em Dia, Em Atraso)
         self.status_filter = QComboBox()
         self.status_filter.addItems(["Todos", "Em Dia", "Em Atraso"])
         dashboard_layout.addWidget(self.status_filter)
 
-        # Configuração do canvas para gráfico
+        # Filtro para selecionar o tipo de gráfico (Barra ou Pizza)
+        self.chart_type_filter = QComboBox()
+        self.chart_type_filter.addItems(["Barra", "Pizza"])
+        dashboard_layout.addWidget(self.chart_type_filter)
+
+        # Canvas para o gráfico
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
         dashboard_layout.addWidget(self.canvas)
@@ -257,105 +398,140 @@ class PedidoApp(QMainWindow):
         dashboard_widget.setLayout(dashboard_layout)
         self.tabs.addTab(dashboard_widget, "Dashboard")
 
-        # Conecta os filtros ao método de atualização do gráfico
+        # Conectar os filtros à função de atualização do gráfico
         self.combo_filter.currentIndexChanged.connect(self.update_graph)
         self.status_filter.currentIndexChanged.connect(self.update_graph)
+        self.chart_type_filter.currentIndexChanged.connect(self.update_graph)
 
-        self.update_graph()  # Inicia com o gráfico geral
+        self.update_graph()  # Inicializa com o gráfico padrão
 
     def update_graph(self):
-        sector = self.combo_filter.currentText()
+        sector = self.combo_filter.currentText()  # Pega o setor selecionado
         status = self.status_filter.currentText()  # Pega o status selecionado
+        chart_type = self.chart_type_filter.currentText()  # Pega o tipo de gráfico selecionado
 
-        self.figure.clear()  # Limpa os gráficos anteriores
+        self.figure.clear()  # Limpa o gráfico atual
 
-        data = count_books_and_orders_by_stage()
-        delays = check_delays_by_stage()
+        sectors = self.stages if sector == "Geral" else [sector]
 
-        if sector == "Geral":
-            sectors = self.stages
-        else:
-            sectors = [sector]
+        # Carrega os dados com os filtros
+        data, delays = count_books_and_orders_by_stage(sectors)
 
+        # Determina o tipo de gráfico
         indices = range(len(sectors))
-        width = 0.20  # Largura das barras ajustada para quatro barras
+        if chart_type == "Barra":
+            self.plot_bar_chart(sectors, data, delays, status, indices)
+        elif chart_type == "Pizza":
+            self.plot_pie_chart(sectors, data, delays, status)
 
-        ax = self.figure.add_subplot(111)
-
-        if status == "Todos":
-            self.plot_all_data(sectors, data, delays, indices, width, ax)
-        elif status == "Em Dia":
-            self.plot_on_time_data(sectors, data, indices, width, ax)
-        elif status == "Em Atraso":
-            self.plot_delayed_data(sectors, delays, indices, width, ax)
-
+        # Atualiza o layout do gráfico
         self.figure.tight_layout()
         self.canvas.draw()
 
-    # Você pode dividir as partes de plotagem em diferentes métodos para organizar melhor:
-    def plot_all_data(self, sectors, data, delays, indices, width, ax):
-        total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
-        total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
-        pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
-        livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
 
-        bar1 = ax.bar([i - 1.5 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='orange')
-        bar2 = ax.bar([i - 0.5 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
-        bar3 = ax.bar([i + 0.5 * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='yellow')
-        bar4 = ax.bar([i + 1.5 * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='red')
 
-        ax.set_title('Comparativo por Setor')
-        ax.set_xlabel('Setor')
-        ax.set_xticks(indices)
-        ax.set_xticklabels(sectors, rotation=45, ha='right')
-        ax.legend()
-        
-        self.add_bar_labels(bar1, ax)
-        self.add_bar_labels(bar2, ax)
-        self.add_bar_labels(bar3, ax)
-        self.add_bar_labels(bar4, ax)
 
-    def plot_on_time_data(self, sectors, data, indices, width, ax):
-        total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
-        total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
+    # Função para plotar gráfico de barras (mesmo que antes, apenas separado)
+    def plot_bar_chart(self, sectors, data, delays, status, indices):
+        width = 0.20  # Largura ajustada para cada grupo de barras
+        ax = self.figure.add_subplot(111)
 
-        bar1 = ax.bar([i - 0.5 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='orange')
-        bar2 = ax.bar([i + 0.5 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
+        # Separação dos dados
+        if status == "Todos":
+            total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
+            total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
+            bar_total_pedidos = ax.bar([i - 0.3 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='blue')
+            bar_total_livros = ax.bar([i + 0.3 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
 
-        ax.set_title('Dados Em Dia por Setor')
-        ax.set_xlabel('Setor')
-        ax.set_xticks(indices)
-        ax.set_xticklabels(sectors, rotation=45, ha='right')
-        ax.legend()
+        elif status == "Em Dia":
+            pedidos_em_dia = [data.get(s, {'pedidos_em_dia': 0})['pedidos_em_dia'] for s in sectors]
+            livros_em_dia = [data.get(s, {'livros_em_dia': 0})['livros_em_dia'] for s in sectors]
+            bar_em_dia_pedidos = ax.bar([i - 0.3 * width for i in indices], pedidos_em_dia, width, label='Pedidos em Dia', color='orange')
+            bar_em_dia_livros = ax.bar([i + 0.3 * width for i in indices], livros_em_dia, width, label='Livros em Dia', color='lightgreen')
 
-        self.add_bar_labels(bar1, ax)
-        self.add_bar_labels(bar2, ax)
+        elif status == "Em Atraso":
+            pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
+            livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
+            bar_atraso_pedidos = ax.bar([i - 0.3 * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='red')
+            bar_atraso_livros = ax.bar([i + 0.3 * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='purple')
 
-    def plot_delayed_data(self, sectors, delays, indices, width, ax):
-        pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
-        livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
-
-        bar1 = ax.bar([i - 0.5 * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='yellow')
-        bar2 = ax.bar([i + 0.5 * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='red')
-
-        ax.set_title('Dados Atrasados por Setor')
+        # Configuração do gráfico
+        ax.set_title(f'Comparativo por Status: {status}')
         ax.set_xlabel('Setor')
         ax.set_xticks(indices)
         ax.set_xticklabels(sectors, rotation=45, ha='right')
         ax.legend()
 
-        self.add_bar_labels(bar1, ax)
-        self.add_bar_labels(bar2, ax)
+        # Adicionar rótulos nas barras
+        if status == "Todos":
+            self.add_bar_labels(bar_total_pedidos, ax)
+            self.add_bar_labels(bar_total_livros, ax)
+        elif status == "Em Dia":
+            self.add_bar_labels(bar_em_dia_pedidos, ax)
+            self.add_bar_labels(bar_em_dia_livros, ax)
+        elif status == "Em Atraso":
+            self.add_bar_labels(bar_atraso_pedidos, ax)
+            self.add_bar_labels(bar_atraso_livros, ax)
 
+
+
+    # Função para plotar gráfico de pizza
+    def plot_pie_chart(self, sectors, data, delays, status):
+        ax = self.figure.add_subplot(111)
+
+        # Configuração de valores de acordo com o status selecionado
+        if status == "Todos":
+            # Soma o total de livros em todos os setores
+            total_livros_por_setor = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
+            labels = sectors
+            titulo = "Distribuição Geral de Livros por Setor"
+
+        elif status == "Em Dia":
+            # Soma o total de livros em dia por setor
+            total_livros_por_setor = [data.get(s, {'livros_em_dia': 0})['livros_em_dia'] for s in sectors]
+            labels = sectors
+            titulo = "Distribuição de Livros Em Dia por Setor"
+
+        elif status == "Em Atraso":
+            # Soma o total de livros em atraso por setor
+            total_livros_por_setor = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
+            labels = sectors
+            titulo = "Distribuição de Livros Atrasados por Setor"
+
+        # Remover setores sem livros para não mostrar setores com valor zero no gráfico
+        total_livros_por_setor, labels = zip(*[(livros, lbl) for livros, lbl in zip(total_livros_por_setor, labels) if livros > 0])
+
+        # Verificação para evitar gráfico de pizza vazio
+        if sum(total_livros_por_setor) == 0:
+            print("Nenhum livro disponível para o gráfico de pizza.")
+            ax.text(0.5, 0.5, "Nenhum livro disponível", ha='center', va='center')
+            self.canvas.draw()
+            return
+
+        # Depuração para verificar os valores sendo plotados
+        print(f"Total de Livros por Setor: {total_livros_por_setor}")
+        print(f"Setores: {labels}")
+
+        # Plotar gráfico de pizza
+        ax.pie(total_livros_por_setor, labels=labels, autopct='%1.1f%%', startangle=90)
+
+        # Título do gráfico de pizza
+        ax.set_title(titulo)
+
+        # Atualizar gráfico
+        self.canvas.draw()
+
+
+
+        # Adicionar rótulos nas barras
     def add_bar_labels(self, bars, ax):
         for bar in bars:
             height = bar.get_height()
-            ax.annotate('{}'.format(height),
+            ax.annotate(f'{height}',
                         xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3),  # 3 points vertical offset
+                        xytext=(0, 3),  # 3 pontos de offset
                         textcoords="offset points",
                         ha='center', va='bottom')
-
 
     def fetch_data(self, sector):
         if sector == "Geral":
