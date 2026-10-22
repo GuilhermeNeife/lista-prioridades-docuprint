@@ -4,7 +4,7 @@ import sqlite3
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QLabel, QPushButton, QProgressBar, QDateEdit, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QLabel, QPushButton, QProgressBar, QDateEdit, QMessageBox
 from PySide6.QtWidgets import QDialog, QLineEdit, QHBoxLayout
 from PySide6.QtCore import Qt, QDate, QTimer
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -13,11 +13,19 @@ from PySide6.QtGui import QIcon
 from qt_material import apply_stylesheet
 import subprocess
 
-
+# Dicionário de responsáveis por setor
+RESPONSIBLES_BY_STAGE = {
+    'Pré-Impressão': ['Guilherme', 'Calixto'],
+    'Impressão': ['Aurelio', 'Camila', 'Francine', 'Paloma', 'Pedro'],
+    'Encadernação': ['Marcos', 'Josefa', 'Carla', 'Janaina', 'Valeria', 'Vania'],
+    'Refile': ['Luan', 'Diego', 'Valeria', 'Josefa', 'Vania'],
+    'Expedição': ['Dayana', 'David'],
+    'Finalizado': ['Guilherme']
+}
 
 # Dicionário de usuários: senha e setor
 USERS = {
-    'Admin': ('Guilherme123', ['Admin','Pré-Impressão','Impressão','Encadernação','Refile','Expedição','Finalizado','Concluído']),   # Usuário administrador com acesso a todas as abas
+    'Admin': ('', ['Admin','Pré-Impressão','Impressão','Encadernação','Refile','Expedição','Finalizado','Concluído']),   # Usuário administrador com acesso a todas as abas
     'Pré-impressao': ('123', 'Pré-Impressão'),
     'Impressao': ('imp123', 'Impressão'),
     'Acabamento': ('acab123', ['Encadernação','Refile']),
@@ -43,10 +51,10 @@ def update_database(lote, new_status):
     conn.close()
 
 # Envia um e-mail notificando a mudança de status
-def send_email(lote, new_status):
+def send_email(lote, new_status,responsible):
     sender_email = "guilherme.neife@docuprint.com.br"  # E-mail do usuário
     password = "3#5QtvVG"  # Senha do e-mail
-    receivers = ["graficas@uiclap.com"]  # E-mails dos destinatários
+    receivers = ["graficas@uiclap.com"]  # E-mails dos destinatários graficas@uiclap.com
 
     message = MIMEMultipart()
     message["Subject"] = f"Notificação lote {lote}"
@@ -58,6 +66,7 @@ def send_email(lote, new_status):
 
     Status do Lote: {lote}
     Mudou para: {str.upper(new_status)}.
+    Responsavel: {responsible}
 
     Atenciosamente,
     Equipe Docuprint"""
@@ -89,11 +98,22 @@ def check_delays_by_stage():
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
     today = datetime.now().strftime('%Y-%m-%d')
-    # Esta consulta verifica os atrasos por setor
-    cursor.execute("SELECT status, COUNT(*) FROM pedidos WHERE prazo_grafica < ? GROUP BY status", (today,))
+    # Esta consulta verifica os atrasos por setor e inclui o total de livros em atraso
+    cursor.execute("SELECT status, COUNT(*), SUM(Total) FROM pedidos WHERE prazo_grafica < ? GROUP BY status", (today,))
     delays = cursor.fetchall()
     conn.close()
-    return {row[0]: row[1] for row in delays}
+    return {row[0]: {'pedidos_atrasados': row[1], 'livros_atrasados': row[2]} for row in delays}
+
+def fetch_delayed_lots():
+    from datetime import datetime
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+    today = datetime.now().strftime('%Y-%m-%d')
+    # Busca informações sobre lotes atrasados
+    cursor.execute("SELECT lote, SUM(Total), prazo_grafica FROM pedidos WHERE prazo_grafica < ? GROUP BY lote ORDER BY prazo_grafica", (today,))
+    delayed_lots = cursor.fetchall()
+    conn.close()
+    return delayed_lots
 
 
 
@@ -182,7 +202,8 @@ class PedidoApp(QMainWindow):
 
                 # Cria um QTimer para atualizar os dados automaticamente
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.load_data_into_tables)  # Conecta o timeout à função de atualização
+        self.timer.timeout.connect(self.load_data_into_tables)
+
         self.timer.start(150000)  # Atualiza a cada 5 minutos (300000 ms)
 
     def create_tabs(self,user_info):
@@ -248,17 +269,18 @@ class PedidoApp(QMainWindow):
 
         total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
         total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
-        delay_counts = [delays.get(s, 0) for s in sectors]
+        pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
+        livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
 
         indices = range(len(sectors))
-        width = 0.25  # Largura das barras
+        width = 0.20  # Largura das barras ajustada para quatro barras
 
-        # Usando add_subplot para adicionar os eixos à figura existente
-        ax = self.figure.add_subplot(111)  # 111 significa 1x1 grid, primeira subplot
+        ax = self.figure.add_subplot(111)
 
-        bar1 = ax.bar([i - width for i in indices], total_pedidos, width, label='Total de Pedidos', color='b')
-        bar2 = ax.bar(indices, total_livros, width, label='Total de Livros', color='g')
-        bar3 = ax.bar([i + width for i in indices], delay_counts, width, label='Atrasados', color='r')
+        bar1 = ax.bar([i - 1.5 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='orange')
+        bar2 = ax.bar([i - 0.5 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
+        bar3 = ax.bar([i + 0.5 * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='yellow')
+        bar4 = ax.bar([i + 1.5 * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='red')
 
         ax.set_title('Comparativo por Setor')
         ax.set_xlabel('Setor')
@@ -269,9 +291,11 @@ class PedidoApp(QMainWindow):
         self.add_bar_labels(bar1, ax)
         self.add_bar_labels(bar2, ax)
         self.add_bar_labels(bar3, ax)
+        self.add_bar_labels(bar4, ax)
 
         self.figure.tight_layout()
         self.canvas.draw()
+
 
     def add_bar_labels(self, bars, ax):
         for bar in bars:
@@ -422,48 +446,56 @@ class PedidoApp(QMainWindow):
 
     
     def update_mc_status(self, lote, value, column):
-        # Verifica se o valor é vazio e substitui por "" explicitamente
-        if value == "":
-            value = ""
-
         # Define o campo baseado na coluna (5 = M, 6 = C)
         field = 'M' if column == 5 else 'C' if column == 6 else None
         
         if field:
-            # Conexão e atualização no banco
-            conn = sqlite3.connect(database_path)
-            cursor = conn.cursor()
-            cursor.execute(f"UPDATE pedidos SET {field} = ? WHERE lote = ?", (value, lote))
-            conn.commit()
+            with sqlite3.connect(database_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"UPDATE pedidos SET {field} = ? WHERE lote = ?", (value or "", lote))
+                conn.commit()
 
-            # Verificar se tanto "M" quanto "C" estão "ok"
-            cursor.execute("SELECT M, C, status FROM pedidos WHERE lote = ?", (lote,))
-            result = cursor.fetchone()
-            m_value, c_value, status = result
-            
-            # Se os dois forem "ok" e o status for "Impressão", pergunta ao usuário
-            if m_value == "ok" and c_value == "ok" and status == "Impressão":
-                reply = QMessageBox.question(self, 'Confirmação',
-                                            'Capa e Miolo estão prontos. Deseja mudar o status para "Encadernação"?',
-                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                
-                if reply == QMessageBox.Yes:
-                    cursor.execute("UPDATE pedidos SET status = 'Encadernação' WHERE lote = ?", (lote,))
-                    conn.commit()
-                    print(f"Status do lote {lote} atualizado para 'Encadernação'")
-                    send_email(lote, 'encadernação')
-                    self.load_data_into_tables()  # Recarregar dados na interface
+                # Verificar se tanto "M" quanto "C" estão "ok"
+                cursor.execute("SELECT M, C, status FROM pedidos WHERE lote = ?", (lote,))
+                result = cursor.fetchone()
+
+                if result:
+                    m_value, c_value, status = result
+
+                    # Se ambos M e C forem "ok" e o status for "Impressão", pergunta ao usuário
+                    if m_value == "ok" and c_value == "ok" and status == "Impressão":
+                        reply = QMessageBox.question(self, 'Confirmação',
+                                                    'Capa e Miolo estão prontos. Deseja mudar o status para "Encadernação"?',
+                                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                        if reply == QMessageBox.Yes:
+                            # Obter a lista de responsáveis para o status atual
+                            responsible_list = RESPONSIBLES_BY_STAGE.get(status, [])
+
+                            # Perguntar o responsável ao usuário
+                            responsible = self.ask_for_responsible(responsible_list, status)
+
+                            if responsible:
+                                cursor.execute("UPDATE pedidos SET status = 'Encadernação' WHERE lote = ?", (lote,))
+                                conn.commit()
+                                self.update_responsible(lote, 'Encadernação', responsible, status)  # Atualiza o responsável
+                                send_email(lote, 'Encadernação', responsible)  # Enviar e-mail com o responsável
+                                self.load_data_into_tables()  # Recarregar dados na interface
+                            else:
+                                QMessageBox.warning(self, 'Operação Cancelada', 'Mudança de status cancelada.')
+                        else:
+                            print(f"O status do lote {lote} permanece em 'Impressão'")
                 else:
-                    print(f"O status do lote {lote} permanece em 'Impressão'")
-            
-            conn.close()
+                    print(f"Erro: Nenhum resultado encontrado para o lote {lote}")
+
             print(f"Atualizado {field} para {value} no lote {lote}")
         else:
             print(f"Coluna {column} não suportada.")
 
 
 
-    
+
+
 
 
     def cell_clicked(self, row, column):
@@ -506,16 +538,83 @@ class PedidoApp(QMainWindow):
         conn.close()
 
     def update_status(self, lote, new_status):
-        reply = QMessageBox.question(self, 'Confirmação de Mudança de Status',
-                                     'Você tem certeza que deseja mudar o status?',
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        current_status = self.get_current_status(lote)
+        if current_status:
+            responsible_list = RESPONSIBLES_BY_STAGE.get(current_status, [])
 
-        if reply == QMessageBox.Yes:
-            update_database(lote, new_status)  # Atualiza o status no banco de dados
-            send_email(lote, new_status)  # Envia o e-mail notificando a mudança de status
-            self.load_data_into_tables()  # Recarrega os dados para refletir a mudança na interface
+        responsible = self.ask_for_responsible(responsible_list,current_status)
+        if responsible:
+            if self.confirm_status_change(lote, new_status,current_status):
+                self.update_responsible(lote, new_status, responsible,current_status)  # Passa new_status e responsible
+                update_database(lote, new_status)
+                send_email(lote, new_status,responsible)
+                self.load_data_into_tables()
+            else:
+                self.load_data_into_tables()
         else:
-            self.load_data_into_tables()  # Recarrega os dados sem mudança para reverter a seleção do ComboBox
+            QMessageBox.warning(self, 'Operação Cancelada', 'Mudança de status cancelada.')
+
+
+    def get_current_status(self, lote):
+        conn = sqlite3.connect(database_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM pedidos WHERE lote = ?", (lote,))
+        status = cursor.fetchone()
+        conn.close()
+        return status[0] if status else None
+
+
+    def ask_for_responsible(self, responsible_list,current_status):
+        dialog = QDialog()
+        layout = QVBoxLayout()
+        combo = QComboBox()
+        combo.addItems(responsible_list)
+        layout.addWidget(QLabel('Escolha o responsável que finaliza:'))
+        layout.addWidget(combo)
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttonBox.accepted.connect(dialog.accept)
+        buttonBox.rejected.connect(dialog.reject)
+        layout.addWidget(buttonBox)
+        dialog.setLayout(layout)
+        if dialog.exec() == QDialog.Accepted:
+            return combo.currentText()
+        return None
+
+    def confirm_status_change(self, lote, new_status,current_status):
+        reply = QMessageBox.question(self, 'Confirmação de Mudança de Status',
+                                    f'Você tem certeza que deseja mudar o status para "{new_status}"?',
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return reply == QMessageBox.Yes
+
+    def update_responsible(self, lote, new_status, responsible, current_status):
+        conn = sqlite3.connect(database_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT informacao_impressao FROM pedidos WHERE lote = ?", (lote,))
+        result = cursor.fetchone()
+        current_info = result[0] if result else ""
+
+        # Dividir a string atual em pares de status:responsável
+        info_dict = {}
+        if current_info:
+            pairs = current_info.split(',')
+            for pair in pairs:
+                status, resp = pair.split(':')
+                info_dict[status] = resp
+
+        # Atualizar ou adicionar o responsável para o status atual
+        info_dict[current_status] = responsible
+
+        # Ordem específica para reconstruir a string
+        ordered_status = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado']
+        updated_info = ','.join(f"{status}:{info_dict.get(status, '')}" for status in ordered_status if status in info_dict)
+
+        # Atualizar o banco de dados
+        cursor.execute("UPDATE pedidos SET informacao_impressao = ? WHERE lote = ?", (updated_info, lote))
+        conn.commit()
+        conn.close()
+
+
+    
 
 # Configuração do caminho do banco de dados
 
