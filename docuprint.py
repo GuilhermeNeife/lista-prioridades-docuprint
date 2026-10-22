@@ -6,9 +6,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QLabel, QPushButton, QProgressBar, QDateEdit, QMessageBox
 from PySide6.QtWidgets import QDialog, QLineEdit, QHBoxLayout
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PySide6.QtGui import QIcon
 from qt_material import apply_stylesheet
 import subprocess
 
@@ -16,11 +17,11 @@ import subprocess
 
 # Dicionário de usuários: senha e setor
 USERS = {
-    'Admin': ('123', ['Pré-Impressão','Impressão','Encadernação','Refile','Expedição','Finalizado']),   # Usuário administrador com acesso a todas as abas
+    'Admin': ('Guilherme123', ['Admin','Pré-Impressão','Impressão','Encadernação','Refile','Expedição','Finalizado','Concluído']),   # Usuário administrador com acesso a todas as abas
     'Pré-impressao': ('123', 'Pré-Impressão'),
-    'Impressao': ('123', 'Impressão'),
-    'Acabamento': ('123', ['Encadernação','Refile']),
-    'Expedição': ('123', ['Expedição','Finalizado']),
+    'Impressao': ('imp123', 'Impressão'),
+    'Acabamento': ('acab123', ['Encadernação','Refile']),
+    'Expedição': ('exp123', ['Expedição','Finalizado']),
 
 }
 
@@ -28,7 +29,7 @@ USERS = {
 def load_data():
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, Total, informacao_impressao FROM pedidos ORDER BY lote")
+    cursor.execute("SELECT lote, data_hora_entrada, cliente, prazo_grafica, status,M,C, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, Total, informacao_impressao FROM pedidos ORDER BY lote")
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -45,7 +46,7 @@ def update_database(lote, new_status):
 def send_email(lote, new_status):
     sender_email = "guilherme.neife@docuprint.com.br"  # E-mail do usuário
     password = "3#5QtvVG"  # Senha do e-mail
-    receivers = ["marlusm@docuprint.com.br", "guineife@hotmail.com"]  # E-mails dos destinatários
+    receivers = ["graficas@uiclap.com"]  # E-mails dos destinatários
 
     message = MIMEMultipart()
     message["Subject"] = f"Notificação lote {lote}"
@@ -103,6 +104,7 @@ class LoginWindow(QDialog):
         self.setWindowTitle("Login")
         self.setGeometry(500, 300, 300, 200)
         
+        self.setWindowIcon(QIcon("Q:\\___LISTA DE PRIORIDADES\\GUILHERME\\LOGOS\\D DE DOCUPRINT.ico"))
         self.user_sector = None  # Armazena o setor do usuário logado
 
         layout = QVBoxLayout()
@@ -158,23 +160,32 @@ class LoginWindow(QDialog):
 class PedidoApp(QMainWindow):
     def __init__(self, user_sector):
         super().__init__()
-        self.setWindowTitle("Gerenciamento de Pedidos")
+        self.setWindowTitle("Lista de Prioridade UICLAP")
         self.setGeometry(100, 100, 1200, 600)
         self.user_sector = user_sector  # Setor do usuário logado
+
+        # Define o ícone da janela
+        self.setWindowIcon(QIcon("Q:\\___LISTA DE PRIORIDADES\\GUILHERME\\LOGOS\\favicon.ico"))
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        self.stages = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado', 'Concluido']
-        
-        # Removendo a aba 'Concluido' antes de criar as abas
-        if 'Concluido' in self.stages:
-            self.stages.remove('Concluido')
+        self.stages = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado']
+        print(user_sector)
+
+        # Verifica se 'Admin' está na lista de setores do usuário para adicionar 'Concluído'
+        if 'Admin' in self.user_sector:
+            self.stages.append('Concluído')
 
         self.create_tabs()
         self.create_dashboard_tab()
 
-    def create_tabs(self):
+                # Cria um QTimer para atualizar os dados automaticamente
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.load_data_into_tables)  # Conecta o timeout à função de atualização
+        self.timer.start(150000)  # Atualiza a cada 5 minutos (300000 ms)
+
+    def create_tabs(self,user_info):
         self.tables = {}
         
         for stage in self.stages:
@@ -182,9 +193,9 @@ class PedidoApp(QMainWindow):
             layout = QVBoxLayout()
 
             table = QTableWidget()
-            table.setColumnCount(10)
-            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'Total'])
-            if self.user_sector == stage or self.user_sector == "Admin":
+            table.setColumnCount(12)
+            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status','M','C' , 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'Total'])
+            if self.user_sector == stage or self.user_sector == user_info:
                 table.cellChanged.connect(self.cell_changed)
                 table.cellClicked.connect(self.cell_clicked)
             else:
@@ -291,10 +302,11 @@ class PedidoApp(QMainWindow):
             layout = QVBoxLayout()
 
             table = QTableWidget()
-            table.setColumnCount(10)
-            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'total'])
+            table.setColumnCount(12)
+            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status','M', 'C', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'total'])
             table.cellChanged.connect(self.cell_changed)  # Conecta o evento de edição de célula
             table.cellClicked.connect(self.cell_clicked)  # Conecta o evento de clique na célula
+
 
             self.setup_table_styles(table)
 
@@ -323,7 +335,7 @@ class PedidoApp(QMainWindow):
             }
         """)
         # Configurações de largura das colunas
-        widths = [50, 120, 60, 95, 150, 170, 150, 280, 120, 50]
+        widths = [43, 120, 58, 95,130,70, 70,140, 150, 250, 130, 40]
         for i, width in enumerate(widths):
             table.setColumnWidth(i, width)
 
@@ -352,42 +364,111 @@ class PedidoApp(QMainWindow):
 
     def add_row_to_table(self, row):
         try:
-            lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, Total, informacao_impressao = row
+            lote, data_hora_entrada, cliente, prazo_grafica, status, M, C, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, Total, informacao_impressao = row
         except ValueError:
             print("Erro: número de valores não corresponde ao esperado.")
             return
 
-        table = self.tables[status] if status in self.tables else self.tables['Pré-Impressão']
+        table = self.tables.get(status, self.tables['Pré-Impressão'])
         row_count = table.rowCount()
         table.insertRow(row_count)
 
         for col_index, data in enumerate(row):
-            item = QTableWidgetItem(str(data))
-            if col_index not in [5, 6, 8]:  # Editáveis apenas observações e caminho do pedido
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            if col_index == 4:  # Coluna de status com ComboBox
+            if col_index in [5, 6]:  # Colunas M e C
+                combo = QComboBox()
+                combo.addItems(["", "ok"])
+                combo.setCurrentText(data)
+
+                permitido = (isinstance(self.user_sector, list) and status in self.user_sector) or status == self.user_sector
+                combo.setEnabled(permitido)
+                if permitido:
+                    combo.currentIndexChanged.connect(
+                        lambda index, combo=combo, lote=lote, col=col_index: self.update_mc_status(lote, combo.currentText(), col)
+                    )
+                table.setCellWidget(row_count, col_index, combo)
+
+            elif col_index == 4:  # Coluna de status
                 combo = QComboBox()
                 current_index = self.stages.index(status)
-                # Adicionar apenas o status anterior, atual e próximo
-                options = [self.stages[current_index]]  # Adicionar o status atual
+                options = [self.stages[current_index]]
                 if current_index > 0:
-                    options.insert(0, self.stages[current_index - 1])  # Adicionar o status anterior
+                    options.insert(0, self.stages[current_index - 1])
                 if current_index < len(self.stages) - 1:
-                    options.append(self.stages[current_index + 1])  # Adicionar o próximo status
+                    options.append(self.stages[current_index + 1])
                 if 'Pré-Impressão' not in options:
-                    options.insert(0, 'Pré-Impressão')  # Sempre permitir voltar para Pré-Impressão
+                    options.insert(0, 'Pré-Impressão')
+                
+                # Adicionar 'Concluído' se o status é 'Finalizado'
+                if status == 'Finalizado':
+                    options.append('Concluído')
+
                 combo.addItems(options)
                 combo.setCurrentText(status)
-                combo.currentIndexChanged.connect(lambda index, lote=lote, combo=combo: self.update_status(lote, combo.currentText()))
+
+                permitido = (isinstance(self.user_sector, list) and status in self.user_sector) or status == self.user_sector
+                combo.setEnabled(permitido)
+                if permitido:
+                    combo.currentIndexChanged.connect(lambda index, combo=combo, lote=lote: self.update_status(lote, combo.currentText()))
                 table.setCellWidget(row_count, col_index, combo)
             else:
+                item = QTableWidgetItem(str(data))
+                if col_index not in [7, 8]:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 table.setItem(row_count, col_index, item)
 
 
 
+
+
+    
+    def update_mc_status(self, lote, value, column):
+        # Verifica se o valor é vazio e substitui por "" explicitamente
+        if value == "":
+            value = ""
+
+        # Define o campo baseado na coluna (5 = M, 6 = C)
+        field = 'M' if column == 5 else 'C' if column == 6 else None
+        
+        if field:
+            # Conexão e atualização no banco
+            conn = sqlite3.connect(database_path)
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE pedidos SET {field} = ? WHERE lote = ?", (value, lote))
+            conn.commit()
+
+            # Verificar se tanto "M" quanto "C" estão "ok"
+            cursor.execute("SELECT M, C, status FROM pedidos WHERE lote = ?", (lote,))
+            result = cursor.fetchone()
+            m_value, c_value, status = result
+            
+            # Se os dois forem "ok" e o status for "Impressão", pergunta ao usuário
+            if m_value == "ok" and c_value == "ok" and status == "Impressão":
+                reply = QMessageBox.question(self, 'Confirmação',
+                                            'Capa e Miolo estão prontos. Deseja mudar o status para "Encadernação"?',
+                                            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                
+                if reply == QMessageBox.Yes:
+                    cursor.execute("UPDATE pedidos SET status = 'Encadernação' WHERE lote = ?", (lote,))
+                    conn.commit()
+                    print(f"Status do lote {lote} atualizado para 'Encadernação'")
+                    send_email(lote, 'encadernação')
+                    self.load_data_into_tables()  # Recarregar dados na interface
+                else:
+                    print(f"O status do lote {lote} permanece em 'Impressão'")
+            
+            conn.close()
+            print(f"Atualizado {field} para {value} no lote {lote}")
+        else:
+            print(f"Coluna {column} não suportada.")
+
+
+
+    
+
+
     def cell_clicked(self, row, column):
         # Verificar se a coluna clicada é "Caminho do Pedido" (índice 8)
-        if column == 8:
+        if column == 10:
             table = self.tables[self.tabs.tabText(self.tabs.currentIndex())]
             item = table.item(row, column)
             if item:
@@ -404,16 +485,20 @@ class PedidoApp(QMainWindow):
     def cell_changed(self, row, column):
         item = self.tables[self.tabs.tabText(self.tabs.currentIndex())].item(row, 0)
         if item:
-            lote = item.text()  # Correto o erro de digitação aqui
-            if column in [5, 6]:  # Colunas de observações
-                new_text = self.tables[self.tabs.tabText(self.tabs.currentIndex())].item(row, column).text()
-                if new_text:
-                    self.update_observations(lote, new_text, column)
+            lote = item.text()  # Corrigido o erro de digitação
+            if column in [7, 8]:  # Colunas de observações
+                new_text_item = self.tables[self.tabs.tabText(self.tabs.currentIndex())].item(row, column)
+                new_text = new_text_item.text() if new_text_item else ""  # Permitir valores vazios
+
+                # Agora atualiza, mesmo que new_text seja ""
+                self.update_observations(lote, new_text, column)
+                print(f"Atualizado coluna {column} para '{new_text}' no lote {lote}")
         else:
             print(f"Erro: Item não encontrado na linha {row}, coluna 0")
 
+
     def update_observations(self, lote, new_text, column):
-        field = 'observacoes_impressao' if column == 5 else 'observacoes_acabamento'
+        field = 'observacoes_impressao' if column == 7 else 'observacoes_acabamento'
         conn = sqlite3.connect(database_path)
         cursor = conn.cursor()
         cursor.execute(f"UPDATE pedidos SET {field} = ? WHERE lote = ?", (new_text, lote))
@@ -433,7 +518,8 @@ class PedidoApp(QMainWindow):
             self.load_data_into_tables()  # Recarrega os dados sem mudança para reverter a seleção do ComboBox
 
 # Configuração do caminho do banco de dados
-database_path = "C:\\Users\\gneife\\Desktop\\pedidos.db"
+
+database_path = "Q:\\___LISTA DE PRIORIDADES\\GUILHERME\\pedidos.db"
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
