@@ -5,6 +5,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QLabel, QPushButton, QProgressBar, QDateEdit, QMessageBox
+from PySide6.QtWidgets import QDialog, QLineEdit, QHBoxLayout
 from PySide6.QtCore import Qt, QDate
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -12,11 +13,22 @@ from qt_material import apply_stylesheet
 import subprocess
 
 
+
+# Dicionário de usuários: senha e setor
+USERS = {
+    'Admin': ('123', ['Pré-Impressão','Impressão','Encadernação','Refile','Expedição','Finalizado']),   # Usuário administrador com acesso a todas as abas
+    'Pré-impressao': ('123', 'Pré-Impressão'),
+    'Impressao': ('123', 'Impressão'),
+    'Acabamento': ('123', ['Encadernação','Refile']),
+    'Expedição': ('123', ['Expedição','Finalizado']),
+
+}
+
 # Conecta ao banco de dados e obtém os pedidos
 def load_data():
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, qtd_copias, informacao_impressao FROM pedidos ORDER BY lote")
+    cursor.execute("SELECT lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, Total, informacao_impressao FROM pedidos ORDER BY lote")
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -66,7 +78,7 @@ def count_books_and_orders_by_stage():
     conn = sqlite3.connect(database_path)
     cursor = conn.cursor()
     # Esta consulta retorna o total de pedidos e livros agrupados por setor
-    cursor.execute("SELECT status, COUNT(*), SUM(qtd_copias) FROM pedidos GROUP BY status")
+    cursor.execute("SELECT status, COUNT(*), SUM(Total) FROM pedidos GROUP BY status")
     data = cursor.fetchall()
     conn.close()
     return {row[0]: {'total_pedidos': row[1], 'total_livros': row[2]} for row in data}
@@ -82,20 +94,110 @@ def check_delays_by_stage():
     conn.close()
     return {row[0]: row[1] for row in delays}
 
+class LoginWindow(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Login")
+        self.setGeometry(500, 300, 300, 200)
+        
+        self.user_sector = None  # Armazena o setor do usuário logado
+
+        layout = QVBoxLayout()
+        
+        # Combobox para usuários
+        self.username_combo = QComboBox(self)
+        self.username_combo.addItems(USERS.keys())
+        layout.addWidget(self.username_combo)
+        
+        # Senha
+        password_layout = QHBoxLayout()
+        self.password = QLineEdit(self)
+        self.password.setPlaceholderText("Password")
+        self.password.setEchoMode(QLineEdit.Password)
+        password_layout.addWidget(self.password)
+        
+        # Botão para mostrar/ocultar senha
+        self.toggle_password_btn = QPushButton("Show", self)
+        self.toggle_password_btn.setCheckable(True)
+        self.toggle_password_btn.toggled.connect(self.toggle_password_visibility)
+        password_layout.addWidget(self.toggle_password_btn)
+        
+        layout.addLayout(password_layout)
+
+        login_button = QPushButton("Login", self)
+        login_button.clicked.connect(self.check_credentials)
+        layout.addWidget(login_button)
+
+        self.setLayout(layout)
+
+    def toggle_password_visibility(self, checked):
+        if checked:
+            self.password.setEchoMode(QLineEdit.Normal)
+            self.toggle_password_btn.setText("Hide")
+        else:
+            self.password.setEchoMode(QLineEdit.Password)
+            self.toggle_password_btn.setText("Show")
+
+    def check_credentials(self):
+        username = self.username_combo.currentText()
+        password = self.password.text()
+
+        user_info = USERS.get(username)
+        if user_info and user_info[0] == password:
+            self.user_sector = user_info[1]  # Armazena o setor do usuário
+            self.accept()
+        else:
+            QMessageBox.warning(self, 'Login Failed', 'Invalid username or password')
+
+
 
 # Classe principal do aplicativo
 class PedidoApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, user_sector):
         super().__init__()
         self.setWindowTitle("Gerenciamento de Pedidos")
         self.setGeometry(100, 100, 1200, 600)
+        self.user_sector = user_sector  # Setor do usuário logado
 
-        self.tabs = QTabWidget()  # Widget de abas
+        self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
 
-        self.stages = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado']
+        self.stages = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado', 'Concluido']
+        
+        # Removendo a aba 'Concluido' antes de criar as abas
+        if 'Concluido' in self.stages:
+            self.stages.remove('Concluido')
+
         self.create_tabs()
-        self.create_dashboard_tab()  # Chame o método para criar a aba de dashboard
+        self.create_dashboard_tab()
+
+    def create_tabs(self):
+        self.tables = {}
+        
+        for stage in self.stages:
+            table_widget = QWidget()
+            layout = QVBoxLayout()
+
+            table = QTableWidget()
+            table.setColumnCount(10)
+            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'Total'])
+            if self.user_sector == stage or self.user_sector == "Admin":
+                table.cellChanged.connect(self.cell_changed)
+                table.cellClicked.connect(self.cell_clicked)
+            else:
+                table.setToolTip("Você não tem permissão para editar nesta aba.")
+
+            self.setup_table_styles(table)
+            layout.addWidget(table)
+            table_widget.setLayout(layout)
+            self.tabs.addTab(table_widget, stage)
+            self.tables[stage] = table
+
+        self.load_data_into_tables()
+
+
+
+
 
     def create_dashboard_tab(self):
         dashboard_widget = QWidget()
@@ -168,9 +270,9 @@ class PedidoApp(QMainWindow):
 
     def fetch_data(self, sector):
         if sector == "Geral":
-            return count_books_by_stage()  # Retorna dados de todos os setores
+            return count_books_by_stage()  # type: ignore # Retorna dados de todos os setores
         else:
-            return {sector: count_books_by_stage().get(sector, 0)}  # Retorna dados de um setor específico
+            return {sector: count_books_by_stage().get(sector, 0)}  # type: ignore # Retorna dados de um setor específico
 
 
         
@@ -186,7 +288,7 @@ class PedidoApp(QMainWindow):
 
             table = QTableWidget()
             table.setColumnCount(10)
-            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'Qtd Cópias'])
+            table.setHorizontalHeaderLabels(['Lote', 'Data/Hora Entrada', 'Cliente', 'Prazo Gráfica', 'Status', 'Observações Impressão', 'Observações Acabamento', 'Descrição', 'Caminho do Pedido', 'total'])
             table.cellChanged.connect(self.cell_changed)  # Conecta o evento de edição de célula
             table.cellClicked.connect(self.cell_clicked)  # Conecta o evento de clique na célula
 
@@ -205,17 +307,25 @@ class PedidoApp(QMainWindow):
         # Configurações de estilo para a tabela
         table.horizontalHeader().setStyleSheet("""
             QHeaderView::section {
-                background-color: lightgray;
+                background-color: orange;
+                color: black;
                 padding: 4px;
                 border: none; /* Remove as bordas */
                 font-size: 10px; /* Ajuste o tamanho da fonte */
-                height: 25px; /* Altura do cabeçalho */
+                height: 30px; /* Altura do cabeçalho */
+                font-weight: bold;
+                text-align: center;
+
             }
         """)
         # Configurações de largura das colunas
-        widths = [50, 95, 60, 95, 130, 170, 170, 230, 205, 80]
+        widths = [50, 120, 60, 95, 150, 170, 150, 280, 120, 50]
         for i, width in enumerate(widths):
             table.setColumnWidth(i, width)
+
+        # Configurações de altura da linha vertical
+        table.verticalHeader().setDefaultSectionSize(40)
+
 
     def load_data_into_tables(self):
         data = load_data()
@@ -228,6 +338,7 @@ class PedidoApp(QMainWindow):
         for table in self.tables.values():
             table.setRowCount(0)
 
+    
         for row in data:
             self.add_row_to_table(row)
 
@@ -237,7 +348,7 @@ class PedidoApp(QMainWindow):
 
     def add_row_to_table(self, row):
         try:
-            lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, qtd_copias, informacao_impressao = row
+            lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, Total, informacao_impressao = row
         except ValueError:
             print("Erro: número de valores não corresponde ao esperado.")
             return
@@ -267,6 +378,7 @@ class PedidoApp(QMainWindow):
                 table.setCellWidget(row_count, col_index, combo)
             else:
                 table.setItem(row_count, col_index, item)
+
 
 
     def cell_clicked(self, row, column):
@@ -319,9 +431,15 @@ class PedidoApp(QMainWindow):
 # Configuração do caminho do banco de dados
 database_path = "C:\\Users\\gneife\\Desktop\\pedidos.db"
 
-# Executa o aplicativo
-app = QApplication(sys.argv)
-apply_stylesheet(app, theme='light_orange.xml')  # Aplicando o tema Qt Material
-window = PedidoApp()
-window.show()
-sys.exit(app.exec())
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    apply_stylesheet(app, theme='light_orange.xml')
+    login_window = LoginWindow()
+
+    if login_window.exec() == QDialog.Accepted:
+        window = PedidoApp(login_window.user_sector)  # Passa o setor do usuário
+        window.show()
+        sys.exit(app.exec())
+    else:
+        sys.exit()
+
