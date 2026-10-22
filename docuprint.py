@@ -6,6 +6,10 @@ import sqlite3
 import os
 import subprocess
 
+from email.mime.multipart import MIMEMultipart
+import smtplib
+from email.mime.text import MIMEText
+
 # Conecta ao banco de dados e obtém os pedidos
 def load_data():
     conn = sqlite3.connect(database_path)
@@ -23,13 +27,43 @@ def update_database(lote, new_status):
     conn.commit()
     conn.close()
 
+# Envia um e-mail notificando a mudança de status
+def send_email(lote, new_status):
+    sender_email = "guilherme.neife@docuprint.com.br"  # E-mail do usuário
+    password = "3#5QtvVG"  # Senha do e-mail
+    receivers = ["marlusm@docuprint.com.br", "guineife@hotmail.com"]  # E-mails dos destinatários
+
+    message = MIMEMultipart()
+    message["Subject"] = f"Notificação lote {lote}"
+    message["From"] = sender_email
+    message["To"] = ", ".join(receivers)
+
+    text = f"""\
+    Olá,
+
+    O status do lote {lote} mudou para {new_status}.
+
+    Atenciosamente,
+    Equipe Docuprint"""
+
+    part = MIMEText(text, "plain")
+    message.attach(part)
+
+    try:
+        with smtplib.SMTP('smtp.office365.com', 587) as server:
+            server.starttls()
+            server.login(sender_email, password)
+            server.sendmail(sender_email, receivers, message.as_string())
+        print("E-mail enviado com sucesso!")
+    except Exception as e:
+        print(f"Falha ao enviar e-mail: {e}")
+
 # Classe principal do aplicativo
 class PedidoApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gerenciamento de Pedidos")
         self.setGeometry(100, 100, 1200, 600)
-        
 
         self.tabs = QTabWidget()  # Widget de abas
         self.setCentralWidget(self.tabs)
@@ -39,11 +73,6 @@ class PedidoApp(QMainWindow):
 
         # Criando tabelas (abas) para cada estágio
         self.create_tabs()
-
-
-
-
-
 
     # Cria as abas e suas respectivas tabelas
     def create_tabs(self):
@@ -104,7 +133,6 @@ class PedidoApp(QMainWindow):
         for table in self.tables.values():
             table.cellChanged.connect(self.cell_changed)
 
-
     def add_row_to_table(self, row):
         try:
             lote, data_hora_entrada, cliente, prazo_grafica, status, observacoes_impressao, observacoes_acabamento, descricao, caminho_do_pedido, qtd_copias, informacao_impressao = row
@@ -129,7 +157,6 @@ class PedidoApp(QMainWindow):
                 table.setCellWidget(row_count, col_index, combo)
             else:
                 table.setItem(row_count, col_index, item)
-
 
     def cell_clicked(self, row, column):
         # Verificar se a coluna clicada é "Caminho do Pedido" (índice 8)
@@ -172,13 +199,11 @@ class PedidoApp(QMainWindow):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            update_database(lote, new_status)
-            self.load_data_into_tables()
-              # Recarrega os dados para mover o pedido para a nova aba
+            update_database(lote, new_status)  # Atualiza o status no banco de dados
+            send_email(lote, new_status)  # Envia o e-mail notificando a mudança de status
+            self.load_data_into_tables()  # Recarrega os dados para refletir a mudança na interface
         else:
-            self.load_data_into_tables()  # Recarrega sem mudar o status para reverter a seleção do ComboBox
-
-
+            self.load_data_into_tables()  # Recarrega os dados sem mudança para reverter a seleção do ComboBox
 
 # Configuração do caminho do banco de dados
 database_path = "C:\\Users\\gneife\\Desktop\\pedidos.db"
