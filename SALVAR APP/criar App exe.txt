@@ -1,0 +1,8 @@
+pyinstaller --onefile --noconsole --icon="C:\Users\gneife\Desktop\PROJETOS\LISTA DE PRIORIDADE UICLAP\SALVAR APP" --exclude-module PyQt5 docuprint.py
+pyinstaller --onefile --noconsole --icon="C:\Users\gneife\Desktop\PROJETOS\LISTA DE PRIORIDADE UICLAP\SALVAR APP\favicon.ico" --exclude-module PyQt5 docuprint.py
+python -m PyInstaller --onefile --noconsole --icon="C:\Users\gneife\Desktop\PROJETOS\LISTA DE PRIORIDADE UICLAP\SALVAR APP\favicon.ico" --exclude-module PyQt5 "docuprint.py"
+python -m PyInstaller --onefile --noconsole ^
+--icon="C:\Users\gneife\Desktop\PROJETOS\LISTA DE PRIORIDADE UICLAP\SALVAR APP\favicon.ico" ^
+--exclude-module tensorflow ^
+--exclude-module keras ^
+"docuprint.py"
