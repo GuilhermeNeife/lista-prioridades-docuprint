@@ -29,7 +29,7 @@ USERS = {
     'Pré-impressao': ('123', 'Pré-Impressão'),
     'Impressao': ('imp123', 'Impressão'),
     'Acabamento': ('acab123', ['Encadernação','Refile']),
-    'Expedição': ('exp123', ['Expedição','Finalizado']),
+    'Expedição': ('exp123', ['Expedição','Finalizado','concluído']),
 
 }
 
@@ -330,7 +330,7 @@ class PedidoApp(QMainWindow):
         print(user_sector)
 
         # Verifica se 'Admin' está na lista de setores do usuário para adicionar 'Concluído'
-        if 'Admin' in self.user_sector:
+        if 'Admin' or 'expedição' in self.user_sector:
             self.stages.append('Concluído')
 
         self.create_tabs()
@@ -425,7 +425,7 @@ class PedidoApp(QMainWindow):
             self.plot_pie_chart(sectors, data, delays, status)
 
         # Atualiza o layout do gráfico
-        self.figure.tight_layout()
+        self.figure.tight_layout(pad=2.0)  # Ajuste de padding, experimente diferentes valores
         self.canvas.draw()
 
 
@@ -434,26 +434,27 @@ class PedidoApp(QMainWindow):
     # Função para plotar gráfico de barras (mesmo que antes, apenas separado)
     def plot_bar_chart(self, sectors, data, delays, status, indices):
         width = 0.20  # Largura ajustada para cada grupo de barras
+        offset = 0.6  # Deslocamento entre os grupos de barras
         ax = self.figure.add_subplot(111)
 
         # Separação dos dados
         if status == "Todos":
             total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
             total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
-            bar_total_pedidos = ax.bar([i - 0.3 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='blue')
-            bar_total_livros = ax.bar([i + 0.3 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
+            bar_total_pedidos = ax.bar([i - offset * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='orange')
+            bar_total_livros = ax.bar([i + offset * width for i in indices], total_livros, width, label='Total de Livros', color='blue')
 
         elif status == "Em Dia":
             pedidos_em_dia = [data.get(s, {'pedidos_em_dia': 0})['pedidos_em_dia'] for s in sectors]
             livros_em_dia = [data.get(s, {'livros_em_dia': 0})['livros_em_dia'] for s in sectors]
-            bar_em_dia_pedidos = ax.bar([i - 0.3 * width for i in indices], pedidos_em_dia, width, label='Pedidos em Dia', color='orange')
-            bar_em_dia_livros = ax.bar([i + 0.3 * width for i in indices], livros_em_dia, width, label='Livros em Dia', color='lightgreen')
+            bar_em_dia_pedidos = ax.bar([i - offset * width for i in indices], pedidos_em_dia, width, label='Pedidos em Dia', color='orange')
+            bar_em_dia_livros = ax.bar([i + offset * width for i in indices], livros_em_dia, width, label='Livros em Dia', color='green')
 
         elif status == "Em Atraso":
             pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
             livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
-            bar_atraso_pedidos = ax.bar([i - 0.3 * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='red')
-            bar_atraso_livros = ax.bar([i + 0.3 * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='purple')
+            bar_atraso_pedidos = ax.bar([i - offset * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='orange')
+            bar_atraso_livros = ax.bar([i + offset * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='red')
 
         # Configuração do gráfico
         ax.set_title(f'Comparativo por Status: {status}')
@@ -461,6 +462,9 @@ class PedidoApp(QMainWindow):
         ax.set_xticks(indices)
         ax.set_xticklabels(sectors, rotation=45, ha='right')
         ax.legend()
+                # Ajustes adicionais após a plotagem
+        ax.margins(y=0.2)  # Adiciona uma margem no topo para os rótulos das barras
+        ax.figure.subplots_adjust(bottom=0.2, top=0.9)  # Ajuste do layout da subplot
 
         # Adicionar rótulos nas barras
         if status == "Todos":
@@ -667,63 +671,6 @@ class PedidoApp(QMainWindow):
                 table.setItem(row_count, col_index, item)
 
 
-
-
-
-    
-    def update_mc_status(self, lote, value, column):
-        # Define o campo baseado na coluna (5 = M, 6 = C)
-        field = 'M' if column == 5 else 'C' if column == 6 else None
-        
-        if field:
-            with sqlite3.connect(database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(f"UPDATE pedidos SET {field} = ? WHERE lote = ?", (value or "", lote))
-                conn.commit()
-
-                # Verificar se tanto "M" quanto "C" estão "ok"
-                cursor.execute("SELECT M, C, status FROM pedidos WHERE lote = ?", (lote,))
-                result = cursor.fetchone()
-
-                if result:
-                    m_value, c_value, status = result
-
-                    # Se ambos M e C forem "ok" e o status for "Impressão", pergunta ao usuário
-                    if m_value == "ok" and c_value == "ok" and status == "Impressão":
-                        reply = QMessageBox.question(self, 'Confirmação',
-                                                    'Capa e Miolo estão prontos. Deseja mudar o status para "Encadernação"?',
-                                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-
-                        if reply == QMessageBox.Yes:
-                            # Obter a lista de responsáveis para o status atual
-                            responsible_list = RESPONSIBLES_BY_STAGE.get(status, [])
-
-                            # Perguntar o responsável ao usuário
-                            responsible = self.ask_for_responsible(responsible_list, status)
-
-                            if responsible:
-                                cursor.execute("UPDATE pedidos SET status = 'Encadernação' WHERE lote = ?", (lote,))
-                                conn.commit()
-                                self.update_responsible(lote, 'Encadernação', responsible, status)  # Atualiza o responsável
-                                send_email(lote, 'Encadernação', responsible)  # Enviar e-mail com o responsável
-                                self.load_data_into_tables()  # Recarregar dados na interface
-                            else:
-                                QMessageBox.warning(self, 'Operação Cancelada', 'Mudança de status cancelada.')
-                        else:
-                            print(f"O status do lote {lote} permanece em 'Impressão'")
-                else:
-                    print(f"Erro: Nenhum resultado encontrado para o lote {lote}")
-
-            print(f"Atualizado {field} para {value} no lote {lote}")
-        else:
-            print(f"Coluna {column} não suportada.")
-
-
-
-
-
-
-
     def cell_clicked(self, row, column):
         # Verificar se a coluna clicada é "Caminho do Pedido" (índice 8)
         if column == 10:
@@ -763,6 +710,18 @@ class PedidoApp(QMainWindow):
         conn.commit()
         conn.close()
 
+
+
+    def get_current_status(self, lote):
+        conn = sqlite3.connect(database_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM pedidos WHERE lote = ?", (lote,))
+        status = cursor.fetchone()
+        conn.close()
+        return status[0] if status else None
+
+
+
     def update_status(self, lote, new_status):
         current_status = self.get_current_status(lote)
         if current_status:
@@ -779,15 +738,85 @@ class PedidoApp(QMainWindow):
                 self.load_data_into_tables()
         else:
             QMessageBox.warning(self, 'Operação Cancelada', 'Mudança de status cancelada.')
+    
+    def update_mc_status(self, lote, value, column):
+        # Define o campo baseado na coluna (5 = M, 6 = C)
+        if column == 5:
+            field = 'M'
+            current_status = 'Miolo'
+        elif column == 6:
+            field = 'C'
+            current_status = 'Capa'
+        else:
+            print(f"Coluna {column} não suportada ou valor inválido.")
+            return  # Saímos da função se a coluna não for válida
+
+        # Permitir atualização para vazio sem perguntar o responsável
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(f"UPDATE pedidos SET {field} = ? WHERE lote = ?", (value or "", lote))
+            conn.commit()
+
+            # Se o valor for vazio (""), apenas atualizar e sair sem perguntar responsável
+            if not value:
+                print(f"Campo {field} foi limpo no lote {lote}.")
+                return
+
+            # Continuar a lógica se o valor for "ok"
+            if value == "ok":
+                # Perguntar o responsável imediatamente ao marcar "ok"
+                if current_status == 'Miolo':
+                    responsible_miolo = self.ask_for_responsible(RESPONSIBLES_BY_STAGE.get('Impressão', []), 'Miolo')
+                    if responsible_miolo:
+                        # Atualiza o responsável pelo Miolo no campo informacao_impressao
+                        self.update_responsible(lote, 'Miolo', responsible_miolo, 'Miolo')
+                        print(f"Responsável pelo Miolo: {responsible_miolo} atualizado para o lote {lote}.")
+                elif current_status == 'Capa':
+                    responsible_capa = self.ask_for_responsible(RESPONSIBLES_BY_STAGE.get('Impressão', []), 'Capa')
+                    if responsible_capa:
+                        # Atualiza o responsável pela Capa no campo informacao_impressao
+                        self.update_responsible(lote, 'Capa', responsible_capa, 'Capa')
+                        print(f"Responsável pela Capa: {responsible_capa} atualizado para o lote {lote}.")
+
+                # Verificar se tanto "M" quanto "C" estão "ok" e se o status for "Impressão"
+                cursor.execute("SELECT M, C, status FROM pedidos WHERE lote = ?", (lote,))
+                result = cursor.fetchone()
+
+                if result:
+                    m_value, c_value, status = result
+                    if m_value == "ok" and c_value == "ok" and status == "Impressão":
+                        reply = QMessageBox.question(self, 'Confirmação',
+                                                    'Capa e Miolo estão prontos. Deseja mudar o status para "Encadernação"?',
+                                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                        if reply == QMessageBox.Yes:
+                            # Atualizar o status para 'Encadernação'
+                            cursor.execute("UPDATE pedidos SET status = 'Encadernação' WHERE lote = ?", (lote,))
+                            conn.commit()
+
+                            # Perguntar o responsável correto para o **status que está sendo finalizado** (Impressão)
+                            responsible_list = RESPONSIBLES_BY_STAGE.get('Impressão', [])
+                            responsible = self.ask_for_responsible(responsible_list, 'Impressão')
+
+                            if responsible:
+                                # Atualiza o responsável pelo status 'Impressão' (status finalizado)
+                                self.update_responsible(lote, 'Impressão', responsible, status)
+                                send_email(lote, 'Encadernação', responsible)
+                                self.load_data_into_tables()
+                            else:
+                                QMessageBox.warning(self, 'Operação Cancelada', 'Mudança de status cancelada.')
+                        else:
+                            print(f"O status do lote {lote} permanece em 'Impressão'")
+
+            print(f"Atualizado {field} para {value} no lote {lote}")
 
 
-    def get_current_status(self, lote):
-        conn = sqlite3.connect(database_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT status FROM pedidos WHERE lote = ?", (lote,))
-        status = cursor.fetchone()
-        conn.close()
-        return status[0] if status else None
+
+
+
+
+
+
 
 
     def ask_for_responsible(self, responsible_list,current_status):
@@ -815,11 +844,13 @@ class PedidoApp(QMainWindow):
     def update_responsible(self, lote, new_status, responsible, current_status):
         conn = sqlite3.connect(database_path)
         cursor = conn.cursor()
+        
+        # Buscar o campo "informacao_impressao" do pedido
         cursor.execute("SELECT informacao_impressao FROM pedidos WHERE lote = ?", (lote,))
         result = cursor.fetchone()
         current_info = result[0] if result else ""
 
-        # Dividir a string atual em pares de status:responsável
+        # Dividir a string atual em pares de status:responsável (Ex: 'Impressão:Guilherme')
         info_dict = {}
         if current_info:
             pairs = current_info.split(',')
@@ -827,17 +858,24 @@ class PedidoApp(QMainWindow):
                 status, resp = pair.split(':')
                 info_dict[status] = resp
 
-        # Atualizar ou adicionar o responsável para o status atual
-        info_dict[current_status] = responsible
+        # Atualizar ou adicionar o responsável para o status atual (incluindo Miolo e Capa)
+        if current_status == 'Miolo':
+            info_dict['Miolo'] = responsible  # Atualizar ou criar responsável para Miolo
+        elif current_status == 'Capa':
+            info_dict['Capa'] = responsible  # Atualizar ou criar responsável para Capa
+        else:
+            info_dict[current_status] = responsible  # Para os outros status
 
-        # Ordem específica para reconstruir a string
-        ordered_status = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado']
+        # Ordem específica para reconstruir a string, incluindo Miolo e Capa
+        ordered_status = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado', 'Miolo', 'Capa']
         updated_info = ','.join(f"{status}:{info_dict.get(status, '')}" for status in ordered_status if status in info_dict)
 
-        # Atualizar o banco de dados
+        # Atualizar o banco de dados com a nova string informacao_impressao
         cursor.execute("UPDATE pedidos SET informacao_impressao = ? WHERE lote = ?", (updated_info, lote))
         conn.commit()
         conn.close()
+
+
 
 
     
