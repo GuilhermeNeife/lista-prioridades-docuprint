@@ -40,6 +40,11 @@ class PedidoApp(QMainWindow):
         # Criando tabelas (abas) para cada estágio
         self.create_tabs()
 
+
+
+
+
+
     # Cria as abas e suas respectivas tabelas
     def create_tabs(self):
         self.tables = {}
@@ -153,7 +158,6 @@ class PedidoApp(QMainWindow):
         else:
             print(f"Erro: Item não encontrado na linha {row}, coluna 0")
 
-
     def update_observations(self, lote, new_text, column):
         field = 'observacoes_impressao' if column == 5 else 'observacoes_acabamento'
         conn = sqlite3.connect(database_path)
@@ -163,8 +167,18 @@ class PedidoApp(QMainWindow):
         conn.close()
 
     def update_status(self, lote, new_status):
-        update_database(lote, new_status)
-        self.load_data_into_tables()  # Recarrega os dados para mover o pedido para a nova aba
+        reply = QMessageBox.question(self, 'Confirmação de Mudança de Status',
+                                     'Você tem certeza que deseja mudar o status?',
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            update_database(lote, new_status)
+            self.load_data_into_tables()
+              # Recarrega os dados para mover o pedido para a nova aba
+        else:
+            self.load_data_into_tables()  # Recarrega sem mudar o status para reverter a seleção do ComboBox
+
+
 
 # Configuração do caminho do banco de dados
 database_path = "C:\\Users\\gneife\\Desktop\\pedidos.db"
