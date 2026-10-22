@@ -1,14 +1,16 @@
 import sys
-from PySide6.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QComboBox, QVBoxLayout, QWidget, QTabWidget, QMessageBox
-from PySide6.QtCore import Qt
-from qt_material import apply_stylesheet
-import sqlite3
 import os
+import sqlite3
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QLabel, QPushButton, QProgressBar, QDateEdit, QMessageBox
+from PySide6.QtCore import Qt, QDate
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from qt_material import apply_stylesheet
 import subprocess
 
-from email.mime.multipart import MIMEMultipart
-import smtplib
-from email.mime.text import MIMEText
 
 # Conecta ao banco de dados e obtém os pedidos
 def load_data():
@@ -39,9 +41,10 @@ def send_email(lote, new_status):
     message["To"] = ", ".join(receivers)
 
     text = f"""\
-    Olá,
+    Olá, Tudo bem?
 
-    O status do lote {lote} mudou para {new_status}.
+    Status do Lote: {lote}
+    Mudou para: {str.upper(new_status)}.
 
     Atenciosamente,
     Equipe Docuprint"""
@@ -58,6 +61,28 @@ def send_email(lote, new_status):
     except Exception as e:
         print(f"Falha ao enviar e-mail: {e}")
 
+
+def count_books_and_orders_by_stage():
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+    # Esta consulta retorna o total de pedidos e livros agrupados por setor
+    cursor.execute("SELECT status, COUNT(*), SUM(qtd_copias) FROM pedidos GROUP BY status")
+    data = cursor.fetchall()
+    conn.close()
+    return {row[0]: {'total_pedidos': row[1], 'total_livros': row[2]} for row in data}
+
+def check_delays_by_stage():
+    from datetime import datetime
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+    today = datetime.now().strftime('%Y-%m-%d')
+    # Esta consulta verifica os atrasos por setor
+    cursor.execute("SELECT status, COUNT(*) FROM pedidos WHERE prazo_grafica < ? GROUP BY status", (today,))
+    delays = cursor.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in delays}
+
+
 # Classe principal do aplicativo
 class PedidoApp(QMainWindow):
     def __init__(self):
@@ -68,12 +93,89 @@ class PedidoApp(QMainWindow):
         self.tabs = QTabWidget()  # Widget de abas
         self.setCentralWidget(self.tabs)
 
-        # Lista de estágios (status)
         self.stages = ['Pré-Impressão', 'Impressão', 'Encadernação', 'Refile', 'Expedição', 'Finalizado']
-
-        # Criando tabelas (abas) para cada estágio
         self.create_tabs()
+        self.create_dashboard_tab()  # Chame o método para criar a aba de dashboard
 
+    def create_dashboard_tab(self):
+        dashboard_widget = QWidget()
+        dashboard_layout = QVBoxLayout()
+
+        # ComboBox para seleção de setor
+        self.combo_filter = QComboBox()
+        self.combo_filter.addItem("Geral")
+        self.combo_filter.addItems(self.stages)  # Adiciona os setores já definidos
+        self.combo_filter.currentIndexChanged.connect(self.update_graph)
+        dashboard_layout.addWidget(self.combo_filter)
+
+        # Configuração do canvas para gráfico
+        self.figure = Figure()
+        self.canvas = FigureCanvas(self.figure)
+        dashboard_layout.addWidget(self.canvas)
+
+        dashboard_widget.setLayout(dashboard_layout)
+        self.tabs.addTab(dashboard_widget, "Dashboard")
+
+        self.update_graph()  # Inicia com o gráfico geral
+
+    def update_graph(self):
+        sector = self.combo_filter.currentText()
+        self.figure.clear()  # Limpa os gráficos anteriores
+
+        data = count_books_and_orders_by_stage()
+        delays = check_delays_by_stage()
+
+        if sector == "Geral":
+            sectors = self.stages
+        else:
+            sectors = [sector]
+
+        total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
+        total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
+        delay_counts = [delays.get(s, 0) for s in sectors]
+
+        # Criando subplots para pedidos e livros
+        ax1 = self.figure.add_subplot(121)  # 1 linha, 2 colunas, posição 1
+        ax2 = self.figure.add_subplot(122)  # 1 linha, 2 colunas, posição 2
+
+        # Gráfico de barras para pedidos
+        indices = range(len(sectors))
+        ax1.bar(indices, total_pedidos, color='blue', label='Total de Pedidos')
+        ax1.set_title('Total de Pedidos por Setor')
+        ax1.set_xlabel('Setor')
+        ax1.set_ylabel('Quantidade de Pedidos')
+        ax1.set_xticks(indices)
+        ax1.set_xticklabels(sectors, rotation=45, ha='right')
+
+        # Adicionando etiquetas de atrasos no gráfico de pedidos
+        for i, delay in enumerate(delay_counts):
+            if delay > 0:
+                ax1.text(i, total_pedidos[i] + 1, f'Atrasados: {delay}', color='red', ha='center')
+
+        # Gráfico de barras para livros
+        ax2.bar(indices, total_livros, color='green', label='Total de Livros')
+        ax2.set_title('Total de Livros por Setor')
+        ax2.set_xlabel('Setor')
+        ax2.set_ylabel('Quantidade de Livros')
+        ax2.set_xticks(indices)
+        ax2.set_xticklabels(sectors, rotation=45, ha='right')
+
+        # Ajustando o layout para evitar sobreposição de etiquetas
+        self.figure.tight_layout()
+
+        self.canvas.draw()
+
+
+    def fetch_data(self, sector):
+        if sector == "Geral":
+            return count_books_by_stage()  # Retorna dados de todos os setores
+        else:
+            return {sector: count_books_by_stage().get(sector, 0)}  # Retorna dados de um setor específico
+
+
+        
+    
+    
     # Cria as abas e suas respectivas tabelas
     def create_tabs(self):
         self.tables = {}
@@ -144,19 +246,28 @@ class PedidoApp(QMainWindow):
         row_count = table.rowCount()
         table.insertRow(row_count)
 
-        # Inicializa todos os itens da linha como QTableWidgetItem e ajusta a editabilidade
         for col_index, data in enumerate(row):
             item = QTableWidgetItem(str(data))
             if col_index not in [5, 6, 8]:  # Editáveis apenas observações e caminho do pedido
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             if col_index == 4:  # Coluna de status com ComboBox
                 combo = QComboBox()
-                combo.addItems(self.stages)
+                current_index = self.stages.index(status)
+                # Adicionar apenas o status anterior, atual e próximo
+                options = [self.stages[current_index]]  # Adicionar o status atual
+                if current_index > 0:
+                    options.insert(0, self.stages[current_index - 1])  # Adicionar o status anterior
+                if current_index < len(self.stages) - 1:
+                    options.append(self.stages[current_index + 1])  # Adicionar o próximo status
+                if 'Pré-Impressão' not in options:
+                    options.insert(0, 'Pré-Impressão')  # Sempre permitir voltar para Pré-Impressão
+                combo.addItems(options)
                 combo.setCurrentText(status)
                 combo.currentIndexChanged.connect(lambda index, lote=lote, combo=combo: self.update_status(lote, combo.currentText()))
                 table.setCellWidget(row_count, col_index, combo)
             else:
                 table.setItem(row_count, col_index, item)
+
 
     def cell_clicked(self, row, column):
         # Verificar se a coluna clicada é "Caminho do Pedido" (índice 8)
