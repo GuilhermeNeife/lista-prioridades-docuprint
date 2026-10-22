@@ -242,8 +242,12 @@ class PedidoApp(QMainWindow):
         self.combo_filter = QComboBox()
         self.combo_filter.addItem("Geral")
         self.combo_filter.addItems(self.stages)  # Adiciona os setores já definidos
-        self.combo_filter.currentIndexChanged.connect(self.update_graph)
         dashboard_layout.addWidget(self.combo_filter)
+
+        # Novo ComboBox para seleção de status dos dados
+        self.status_filter = QComboBox()
+        self.status_filter.addItems(["Todos", "Em Dia", "Em Atraso"])
+        dashboard_layout.addWidget(self.status_filter)
 
         # Configuração do canvas para gráfico
         self.figure = Figure()
@@ -253,10 +257,16 @@ class PedidoApp(QMainWindow):
         dashboard_widget.setLayout(dashboard_layout)
         self.tabs.addTab(dashboard_widget, "Dashboard")
 
+        # Conecta os filtros ao método de atualização do gráfico
+        self.combo_filter.currentIndexChanged.connect(self.update_graph)
+        self.status_filter.currentIndexChanged.connect(self.update_graph)
+
         self.update_graph()  # Inicia com o gráfico geral
 
     def update_graph(self):
         sector = self.combo_filter.currentText()
+        status = self.status_filter.currentText()  # Pega o status selecionado
+
         self.figure.clear()  # Limpa os gráficos anteriores
 
         data = count_books_and_orders_by_stage()
@@ -267,15 +277,27 @@ class PedidoApp(QMainWindow):
         else:
             sectors = [sector]
 
-        total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
-        total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
-        pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
-        livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
-
         indices = range(len(sectors))
         width = 0.20  # Largura das barras ajustada para quatro barras
 
         ax = self.figure.add_subplot(111)
+
+        if status == "Todos":
+            self.plot_all_data(sectors, data, delays, indices, width, ax)
+        elif status == "Em Dia":
+            self.plot_on_time_data(sectors, data, indices, width, ax)
+        elif status == "Em Atraso":
+            self.plot_delayed_data(sectors, delays, indices, width, ax)
+
+        self.figure.tight_layout()
+        self.canvas.draw()
+
+    # Você pode dividir as partes de plotagem em diferentes métodos para organizar melhor:
+    def plot_all_data(self, sectors, data, delays, indices, width, ax):
+        total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
+        total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
+        pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
+        livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
 
         bar1 = ax.bar([i - 1.5 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='orange')
         bar2 = ax.bar([i - 0.5 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
@@ -287,15 +309,43 @@ class PedidoApp(QMainWindow):
         ax.set_xticks(indices)
         ax.set_xticklabels(sectors, rotation=45, ha='right')
         ax.legend()
-
+        
         self.add_bar_labels(bar1, ax)
         self.add_bar_labels(bar2, ax)
         self.add_bar_labels(bar3, ax)
         self.add_bar_labels(bar4, ax)
 
-        self.figure.tight_layout()
-        self.canvas.draw()
+    def plot_on_time_data(self, sectors, data, indices, width, ax):
+        total_pedidos = [data.get(s, {'total_pedidos': 0})['total_pedidos'] for s in sectors]
+        total_livros = [data.get(s, {'total_livros': 0})['total_livros'] for s in sectors]
 
+        bar1 = ax.bar([i - 0.5 * width for i in indices], total_pedidos, width, label='Total de Pedidos', color='orange')
+        bar2 = ax.bar([i + 0.5 * width for i in indices], total_livros, width, label='Total de Livros', color='green')
+
+        ax.set_title('Dados Em Dia por Setor')
+        ax.set_xlabel('Setor')
+        ax.set_xticks(indices)
+        ax.set_xticklabels(sectors, rotation=45, ha='right')
+        ax.legend()
+
+        self.add_bar_labels(bar1, ax)
+        self.add_bar_labels(bar2, ax)
+
+    def plot_delayed_data(self, sectors, delays, indices, width, ax):
+        pedidos_atrasados = [delays.get(s, {'pedidos_atrasados': 0})['pedidos_atrasados'] for s in sectors]
+        livros_atrasados = [delays.get(s, {'livros_atrasados': 0})['livros_atrasados'] for s in sectors]
+
+        bar1 = ax.bar([i - 0.5 * width for i in indices], pedidos_atrasados, width, label='Pedidos Atrasados', color='yellow')
+        bar2 = ax.bar([i + 0.5 * width for i in indices], livros_atrasados, width, label='Livros Atrasados', color='red')
+
+        ax.set_title('Dados Atrasados por Setor')
+        ax.set_xlabel('Setor')
+        ax.set_xticks(indices)
+        ax.set_xticklabels(sectors, rotation=45, ha='right')
+        ax.legend()
+
+        self.add_bar_labels(bar1, ax)
+        self.add_bar_labels(bar2, ax)
 
     def add_bar_labels(self, bars, ax):
         for bar in bars:
